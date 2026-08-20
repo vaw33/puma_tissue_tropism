@@ -1,0 +1,560 @@
+# ==============================================================================
+# PURPLE MARTIN TISSUE TROPISM: DATA ANALYSIS & VISUALIZATION
+# ==============================================================================
+
+# Load required packages
+library(tidyverse)
+library(lme4)         # Mixed-effects models
+library(emmeans)      # Post-hoc pairwise comparisons
+library(lmerTest)     # p-values for lme4 models
+library(performance)  # Model diagnostics
+library(corrplot)     # Correlation heatmaps
+library(multcompView) # Significance letter extraction
+
+# ==============================================================================
+# 1. DATA IMPORT & PREPARATION
+# ==============================================================================
+
+# Load primary tissue data (testes excluded from current analyses)
+df <- read.csv("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/all_data_wide_with_wb_10rmvd_use.csv") %>%
+  dplyr::select(-testes_ug_g)
+
+# Load feather data
+df_feathers <- read.csv("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/feathers/feather data_updated.csv")
+
+# Convert tissue data to long format for modeling
+df_long <- df %>%
+  dplyr::select(bird_id, sex, age, ends_with("_ug_g")) %>%
+  pivot_longer(
+    cols = ends_with("_ug_g"), 
+    names_to = "tissue_type", 
+    values_to = "hg_conc"
+  ) %>%
+  filter(!is.na(hg_conc)) %>%
+  mutate(tissue_type = str_replace(tissue_type, "_ug_g", ""))
+
+
+# ==============================================================================
+# 2. ASSUMPTION CHECKS (NORMALITY & VARIANCE)
+# ==============================================================================
+
+# Global raw data model for diagnostics
+model_global_raw <- lmer(hg_conc ~ tissue_type * age + (1 | bird_id), data = df_long)
+check_model(model_global_raw)
+
+# Formal statistical tests for assumptions
+print("--- SHAPIRO-WILK TEST (RAW) ---")
+print(shapiro.test(resid(model_global_raw)))
+
+print("--- BARTLETT'S TEST (TISSUE ONLY) ---")
+print(bartlett.test(hg_conc ~ tissue_type, data = df_long))
+
+print("--- BARTLETT'S TEST (TISSUE x AGE) ---")
+print(bartlett.test(hg_conc ~ interaction(tissue_type, age), data = df_long))
+
+# Log10-transformation assessment
+df_long <- df_long %>%
+  mutate(log_hg = log10(hg_conc))
+
+model_global_log <- lmer(log_hg ~ tissue_type * age + (1 | bird_id), data = df_long)
+
+print("--- SHAPIRO-WILK TEST (LOG-TRANSFORMED) ---")
+print(shapiro.test(resid(model_global_log)))
+
+print("--- BARTLETT'S TEST (LOG-TRANSFORMED) ---")
+print(bartlett.test(log_hg ~ tissue_type, data = df_long))
+
+
+# ==============================================================================
+# 3. DEMOGRAPHIC EFFECTS (AGE & SEX)
+# ==============================================================================
+
+# 3A. Internal Tissues
+model_organs <- lmer(hg_conc ~ tissue_type * age + tissue_type * sex + (1 | bird_id), data = df_long)
+anova(model_organs)
+
+print("--- Age Comparisons within Internal Tissues ---")
+summary(emmeans(model_organs, pairwise ~ age | tissue_type, adjust = "tukey")$contrasts)
+
+print("--- Sex Comparisons within Internal Tissues ---")
+summary(emmeans(model_organs, pairwise ~ sex | tissue_type, adjust = "tukey")$contrasts)
+
+# 3B. External Tissues (Feathers)
+df_feathers_long <- df_feathers %>%
+  dplyr::select(bird_id, sex, age, rr, rl, crown, pr, pl, dorsal, breast) %>%
+  pivot_longer(
+    cols = c(rr, rl, crown, pr, pl, dorsal, breast), 
+    names_to = "feather_type", 
+    values_to = "hg_conc"
+  ) %>%
+  filter(!is.na(hg_conc))
+
+model_feathers <- lmer(hg_conc ~ feather_type * age + feather_type * sex + (1 | bird_id), data = df_feathers_long)
+anova(model_feathers)
+
+print("--- Age Comparisons within Feathers ---")
+summary(emmeans(model_feathers, pairwise ~ age | feather_type, adjust = "tukey")$contrasts)
+
+print("--- Sex Comparisons within Feathers ---")
+summary(emmeans(model_feathers, pairwise ~ sex | feather_type, adjust = "tukey")$contrasts)
+
+
+# ==============================================================================
+# 4. TISSUE TROPISM COMPARISONS & VISUALIZATION
+# ==============================================================================
+
+# Split data by age cohort for internal tissue comparisons
+df_asy <- df_long %>% filter(age == "asy")
+df_sy <- df_long %>% filter(age == "sy")
+
+# Adult (ASY) pairwise comparisons
+model_asy <- lmer(hg_conc ~ tissue_type + (1 | bird_id), data = df_asy)
+anova(model_asy)
+print("--- Adult Internal Tropism Post-Hocs ---")
+summary(emmeans(model_asy, pairwise ~ tissue_type, adjust = "tukey")$contrasts) 
+
+# Subadult (SY) pairwise comparisons
+model_sy <- lmer(hg_conc ~ tissue_type + (1 | bird_id), data = df_sy)
+anova(model_sy)
+print("--- Subadult Internal Tropism Post-Hocs ---")
+summary(emmeans(model_sy, pairwise ~ tissue_type, adjust = "tukey")$contrasts) 
+
+# Generate significance letters for plot annotations
+emm_tissue <- emmeans(model_organs, ~ tissue_type | age) 
+cld_tissue <- cld(emm_tissue, alpha = 0.05, Letters = letters, adjust = "tukey") %>%
+  mutate(.group = str_squish(.group))
+
+max_vals_tissue <- df_long %>%
+  group_by(tissue_type, age) %>%
+  summarize(max_hg = max(hg_conc, na.rm = TRUE), .groups = 'drop')
+
+cld_tissue_plot <- left_join(cld_tissue, max_vals_tissue, by = c("tissue_type", "age"))
+
+# Define significant age difference annotations (asterisks)
+sig_asterisk <- data.frame(
+  tissue_type = c("lung", "brain"),
+  y_position = c(
+    max(df_long$hg_conc[df_long$tissue_type == "lung"], na.rm = TRUE) + 0.30, 
+    max(df_long$hg_conc[df_long$tissue_type == "brain"], na.rm = TRUE) + 0.30
+  ),
+  label = c("***", "*")
+)
+
+# Order factor levels from lowest to highest overall concentration
+df_long$tissue_type <- factor(df_long$tissue_type, 
+                              levels = c("wb", "gi", "pec", "gas", "brain", 
+                                         "heart", "lung", "liver"))
+
+# Build Tissue Tropism Boxplot
+ggplot(df_long, aes(x = tissue_type, y = hg_conc, fill = age)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA, position = position_dodge(width = 0.8)) +
+  geom_jitter(aes(color = age), alpha = 0.6, size = 0.5, 
+              position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8)) +
+  
+  # Significance letters
+  geom_text(data = cld_tissue_plot, 
+            aes(x = tissue_type, y = max_hg + 0.10, label = .group, group = age), 
+            position = position_dodge(width = 0.8),
+            inherit.aes = FALSE, size = 3.0, fontface = "plain") +
+  
+  # Age significance asterisks
+  geom_text(data = sig_asterisk, 
+            aes(x = tissue_type, y = y_position, label = label), 
+            inherit.aes = FALSE, size = 4, fontface = "plain") +
+  
+  scale_fill_manual(values = c("asy" = "#4A90E2", "sy" = "#F5A623"),
+                    labels = c("asy" = "Adult", "sy" = "Subadult")) +
+  scale_color_manual(values = c("asy" = "#2C5A8D", "sy" = "#B37300"),
+                     labels = c("asy" = "Adult", "sy" = "Subadult")) +
+  
+  scale_x_discrete(labels = c("wb" = "Whole Body", "gi" = "GI Tract", "pec" = "Pectoralis", 
+                              "gas" = "Gastrocnemius", "brain" = "Brain", "heart" = "Heart", 
+                              "lung" = "Lung", "liver" = "Liver")) +
+  
+  theme_minimal(base_size = 11) + 
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "plain"),
+    axis.title = element_text(face = "plain"),
+    legend.position = "top",
+    legend.title = element_blank(),
+    panel.grid.major.x = element_blank() 
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +
+  labs(x = "Tissue", y = expression(paste("Mercury Concentration (", mu, "g/g)")))
+
+
+# ==============================================================================
+# 5. LINEAR REGRESSION: ORGANS VS WHOLE BODY
+# ==============================================================================
+
+# Format data for regression
+df_reg <- df %>%
+  dplyr::select(bird_id, sex, age, wb_ug_g, ends_with("_ug_g")) %>%
+  pivot_longer(
+    cols = ends_with("_ug_g") & !wb_ug_g, 
+    names_to = "organ_type", 
+    values_to = "organ_hg"
+  ) %>%
+  mutate(organ_type = str_replace(organ_type, "_ug_g", "")) %>%
+  filter(!is.na(organ_hg) & !is.na(wb_ug_g)) %>%
+  mutate(organ_type = recode(organ_type,
+                             "gi" = "GI Tract",
+                             "pec" = "Pectoralis",
+                             "gas" = "Gastrocnemius",
+                             "brain" = "Brain",
+                             "heart" = "Heart",
+                             "lung" = "Lung",
+                             "liver" = "Liver"
+  ))
+
+# Calculate regression statistics
+reg_labels <- df_reg %>%
+  group_by(organ_type) %>%
+  summarize(
+    r_squared = summary(lm(wb_ug_g ~ organ_hg))$r.squared,
+    p_value = summary(lm(wb_ug_g ~ organ_hg))$coefficients[2, 4],
+    .groups = "drop"
+  ) %>%
+  mutate(
+    p_format = if_else(p_value < 0.001, "p < 0.001", sprintf("p = %.3f", p_value)),
+    plot_label = sprintf("R\u00B2 = %.3f\n%s", r_squared, p_format)
+  ) %>%
+  arrange(desc(r_squared))
+
+print("--- REGRESSION STATS ---")
+print(reg_labels)
+
+# Set factor levels to order facets by R-squared
+ordered_organs <- reg_labels$organ_type
+df_reg$organ_type <- factor(df_reg$organ_type, levels = ordered_organs)
+reg_labels$organ_type <- factor(reg_labels$organ_type, levels = ordered_organs)
+
+# Build Faceted Regression Plot
+ggplot(df_reg, aes(x = organ_hg, y = wb_ug_g)) +
+  geom_point(alpha = 0.5, color = "gray0", size = 0.5) +
+  geom_smooth(method = "lm", color = "grey40", fill = "gray80", linewidth = 0.5) +
+  facet_wrap(~ organ_type, scales = "free_x") +
+  geom_text(
+    data = reg_labels,
+    aes(x = Inf, y = Inf, label = plot_label),
+    hjust = 1.1, 
+    vjust = 1.5, 
+    size = 3,
+    color = "gray20",
+    inherit.aes = FALSE
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(face = "plain", size = 10),
+    axis.title = element_text(face = "plain", size = 11),
+    axis.text.x = element_text(size = 8) 
+  ) +
+  labs(
+    x = expression(Organ~THg~(mu*g/g)),
+    y = expression(Whole~Body~THg~(mu*g/g))
+  )
+
+
+# ==============================================================================
+# 6. VIOLIN PLOT: WHOLE BODY VS ORGANS VS FEATHERS
+# ==============================================================================
+
+# Merge organ and feather data
+df_merged <- df %>%
+  dplyr::select(bird_id, ends_with("_ug_g")) %>%
+  inner_join(df_feathers, by = "bird_id")
+
+# Calculate aggregate category metrics
+sophisticated_data <- df_merged %>%
+  rowwise() %>%
+  mutate(
+    `Feathers (Avg)` = mean(c_across(c(rr, rl, crown, pr, pl, dorsal, breast)), na.rm = TRUE),
+    `Organs (Avg)` = mean(c_across(c(brain_ug_g, liver_ug_g, lung_ug_g, pec_ug_g, heart_ug_g, gi_ug_g, gas_ug_g)), na.rm = TRUE),
+    `Whole Body` = wb_ug_g
+  ) %>%
+  ungroup() %>%
+  dplyr::select(bird_id, `Whole Body`, `Organs (Avg)`, `Feathers (Avg)`) %>%
+  pivot_longer(cols = c(`Whole Body`, `Organs (Avg)`, `Feathers (Avg)`),
+               names_to = "Tissue_Type",
+               values_to = "Hg") %>%
+  filter(!is.na(Hg)) %>%
+  mutate(Tissue_Type = factor(Tissue_Type, levels = c("Whole Body", "Organs (Avg)", "Feathers (Avg)")))
+
+# Build Aggregate Violin Plot
+ggplot(sophisticated_data, aes(x = Tissue_Type, y = Hg)) +
+  geom_violin(aes(fill = Tissue_Type), alpha = 0.3, trim = FALSE, color = "black", linewidth = 0.6) +
+  geom_jitter(aes(color = Tissue_Type), width = 0.12, alpha = 0.6, size = 0.5) +
+  geom_boxplot(width = 0.1, fill = "white", color = "black", outlier.shape = NA, alpha = 0.9, linewidth = 0.6) +
+  
+  scale_fill_manual(values = c("Whole Body" = "#7F7F7F", 
+                               "Organs (Avg)" = "#008080", 
+                               "Feathers (Avg)" = "#7B3294")) +
+  scale_color_manual(values = c("Whole Body" = "#595959", 
+                                "Organs (Avg)" = "#005959", 
+                                "Feathers (Avg)" = "#5A117A")) +
+  
+  theme_classic(base_size = 10) + 
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(face = "plain", size = 9, color = "black"),
+    axis.text.y = element_text(face = "plain", size = 9, color = "black"),
+    axis.title.x = element_text(face = "plain", size = 10, margin = margin(t = 8)), 
+    axis.title.y = element_text(face = "plain", size = 10, margin = margin(r = 8)), 
+    axis.line = element_line(linewidth = 0.5, color = "black"),
+    axis.ticks = element_line(linewidth = 0.3, color = "black"),
+    plot.title = element_text(face = "plain", hjust = 0.5, size = 10) 
+  ) +
+  labs(
+    x = "Tissue", 
+    y = expression(paste("Mercury Concentration (", mu, "g/g)"))
+  )
+
+
+# ==============================================================================
+# 7. CORRELATION HEAT MAP: ORGANS AND FEATHERS
+# ==============================================================================
+
+# Format dataset for correlation matrix
+cor_data_final <- df_merged %>%
+  dplyr::select(ends_with("_ug_g"), rr, rl, crown, pr, pl, dorsal, breast) %>%
+  rename(
+    Brain = brain_ug_g, Liver = liver_ug_g, Lung = lung_ug_g,
+    Heart = heart_ug_g, Pectoralis = pec_ug_g, 
+    `GI Tract` = gi_ug_g, Gastrocnemius = gas_ug_g,
+    `Whole Body` = wb_ug_g,
+    `R. Rectrix` = rr, `L. Rectrix` = rl, Crown = crown, 
+    `R. Primary` = pr, `L. Primary` = pl, Dorsal = dorsal, Breast = breast
+  )
+
+# Calculate correlations
+res_final <- cor(cor_data_final, method = "pearson", use = "pairwise.complete.obs")
+
+# Build Correlation Matrix Plot
+corrplot(res_final, 
+         method = "circle", 
+         type = "upper", 
+         tl.col = "black", 
+         tl.srt = 45, 
+         tl.cex = 0.7,
+         cl.cex = 0.7,
+         addCoef.col = "black", 
+         number.cex = 0.5, 
+         diag = FALSE, 
+         mar = c(0,0,1,0))
+
+# Extract Top Predictors/Proxies
+cor_long <- as.data.frame(as.table(res_final))
+
+organs <- c("Brain", "Liver", "Lung", "Heart", "Pectoralis", "GI Tract", "Gastrocnemius", "Whole Body")
+feathers <- c("R. Rectrix", "L. Rectrix", "Crown", "R. Primary", "L. Primary", "Dorsal", "Breast")
+
+top_proxies <- cor_long %>%
+  filter(Var1 %in% organs) %>%
+  filter(Var2 %in% feathers) %>%
+  arrange(Var1, desc(Freq)) %>%
+  group_by(Var1) %>%
+  slice_max(Freq, n = 1) %>%
+  ungroup() %>%
+  rowwise() %>%
+  mutate(
+    p_value = cor.test(cor_data_final[[as.character(Var1)]], 
+                       cor_data_final[[as.character(Var2)]], 
+                       method = "pearson")$p.value
+  ) %>%
+  ungroup() %>%
+  mutate(
+    p_format = if_else(p_value < 0.001, "< 0.001", sprintf("%.3f", p_value))
+  ) %>%
+  dplyr::select(
+    `Internal Tissue` = Var1,
+    `External Proxy` = Var2,
+    `Pearson r` = Freq,
+    `p-value` = p_format
+  )
+
+print("--- TOP PROXIES (WITH P-VALUES) ---")
+print(top_proxies)
+
+# Check exact correlation value for specific pairs
+print(round(res_final["Lung", c("R. Primary", "L. Primary")], 4))
+
+
+# ==============================================================================
+# 8. INDIVIDUAL Z-SCORE HEATMAPS
+# ==============================================================================
+
+# 8A. Internal Organs
+ind_plot_data_organs <- df %>%
+  dplyr::select(bird_id, age, brain_ug_g, liver_ug_g, lung_ug_g, pec_ug_g, heart_ug_g, gi_ug_g, gas_ug_g) %>%
+  mutate(across(where(is.numeric), ~as.numeric(scale(.x)))) %>%
+  pivot_longer(cols = ends_with("_ug_g"), 
+               names_to = "tissue", 
+               values_to = "z_score") %>%
+  mutate(tissue = str_replace(tissue, "_ug_g", "")) %>%
+  mutate(tissue = recode(tissue,
+                         "gi" = "GI Tract",
+                         "pec" = "Pectoralis",
+                         "gas" = "Gastrocnemius",
+                         "brain" = "Brain",
+                         "heart" = "Heart",
+                         "lung" = "Lung",
+                         "liver" = "Liver")) %>%
+  drop_na(z_score)
+
+heatmap_data_organs <- ind_plot_data_organs %>%
+  group_by(bird_id) %>%
+  mutate(total_organ_burden = sum(z_score, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(bird_id = fct_reorder(as.character(bird_id), total_organ_burden))
+
+ggplot(heatmap_data_organs, aes(x = tissue, y = bird_id, fill = z_score)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c(option = "magma", name = "Z-Score") + 
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "plain", size = 8, color = "black"),
+    axis.text.y = element_blank(), 
+    axis.ticks.y = element_blank(),
+    axis.title.x = element_text(face = "plain", size = 9, margin = margin(t = 8)),
+    axis.title.y = element_text(face = "plain", size = 9, margin = margin(r = 8)),
+    legend.title = element_text(face = "plain", size = 9),
+    panel.grid = element_blank()
+  ) +
+  labs(x = "Organ", y = "Individual Bird")
+
+
+# 8B. External Feathers
+heatmap_feathers <- df_feathers %>%
+  dplyr::select(bird_id, age, 
+                matches("^(rr|rl|crown|pr|pl|dorsal|breast)$", ignore.case = TRUE)) %>%
+  mutate(across(where(is.numeric), ~as.numeric(scale(.x)))) %>%
+  pivot_longer(cols = -c(bird_id, age), 
+               names_to = "feather_type", 
+               values_to = "z_score") %>%
+  mutate(feather_type = str_to_lower(feather_type)) %>%
+  mutate(feather_type = recode(feather_type,
+                               "rr" = "R. Rectrix",
+                               "rl" = "L. Rectrix",
+                               "crown" = "Crown",
+                               "pr" = "R. Primary",
+                               "pl" = "L. Primary",
+                               "dorsal" = "Dorsal",
+                               "breast" = "Breast")) %>%
+  drop_na(z_score)
+
+heatmap_feathers <- heatmap_feathers %>%
+  group_by(bird_id) %>%
+  mutate(total_feather = sum(z_score, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(bird_id = fct_reorder(as.character(bird_id), total_feather))
+
+ggplot(heatmap_feathers, aes(x = feather_type, y = bird_id, fill = z_score)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c(option = "magma", name = "Z-Score") + 
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "plain", size = 8, color = "black"),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.title.x = element_text(face = "plain", size = 9, margin = margin(t = 8)),
+    axis.title.y = element_text(face = "plain", size = 9, margin = margin(r = 8)),
+    legend.title = element_text(face = "plain", size = 9),
+    panel.grid = element_blank()
+  ) +
+  labs(x = "Feather", y = "Individual Bird")
+
+
+# ==============================================================================
+# 9. SUMMARY STATISTICS EXPORT
+# ==============================================================================
+
+# Extract CLD letters for summary table
+emm_asy <- emmeans(model_asy, ~ tissue_type)
+cld_asy <- cld(emm_asy, alpha = 0.05, Letters = letters, adjust = "tukey") %>%
+  mutate(Letter = str_squish(.group), age = "asy") %>%
+  dplyr::select(tissue_type, age, Letter)
+
+emm_sy <- emmeans(model_sy, ~ tissue_type)
+cld_sy <- cld(emm_sy, alpha = 0.05, Letters = letters, adjust = "tukey") %>%
+  mutate(Letter = str_squish(.group), age = "sy") %>%
+  dplyr::select(tissue_type, age, Letter)
+
+cld_combined <- bind_rows(cld_asy, cld_sy)
+
+# Compile table of means, standard deviations, and min/max ranges
+combined_table <- df_long %>%
+  group_by(tissue_type, age) %>%
+  summarize(
+    n = n(),
+    Mean = mean(hg_conc, na.rm = TRUE),
+    SD = sd(hg_conc, na.rm = TRUE),
+    Min = min(hg_conc, na.rm = TRUE),
+    Max = max(hg_conc, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  left_join(cld_combined, by = c("tissue_type", "age")) %>%
+  mutate(Letter = replace_na(Letter, "")) %>%
+  mutate(
+    `THg (ug/g)` = sprintf("%.3f ± %.3f %s", Mean, SD, Letter),
+    `min-max` = sprintf("%.3f – %.3f", Min, Max)
+  ) %>%
+  dplyr::select(tissue_type, age, n, `THg (ug/g)`, `min-max`) %>%
+  pivot_wider(
+    id_cols = tissue_type,
+    names_from = age,
+    values_from = c(n, `THg (ug/g)`, `min-max`)
+  ) %>%
+  rename(
+    `Adult (n)` = n_asy,
+    `Adult THg (ug/g)` = `THg (ug/g)_asy`,
+    `Adult min-max` = `min-max_asy`,
+    `Subadult (n)` = n_sy,
+    `Subadult THg (ug/g)` = `THg (ug/g)_sy`,
+    `Subadult min-max` = `min-max_sy`
+  ) %>%
+  mutate(tissue_type = recode(tissue_type,
+                              "wb" = "Whole Body",
+                              "gi" = "GI Tract",
+                              "pec" = "Pectoralis",
+                              "gas" = "Gastrocnemius",
+                              "brain" = "Brain",
+                              "heart" = "Heart",
+                              "lung" = "Lung",
+                              "liver" = "Liver"
+  )) %>%
+  arrange(factor(tissue_type, levels = c(
+    "Whole Body", "GI Tract", "Pectoralis", "Gastrocnemius", 
+    "Brain", "Heart", "Lung", "Liver"
+  ))) %>%
+  dplyr::select(
+    Tissue = tissue_type,
+    `Adult (n)`, `Adult THg (ug/g)`, `Adult min-max`,
+    `Subadult (n)`, `Subadult THg (ug/g)`, `Subadult min-max`
+  )
+
+print("--- FINAL COMBINED WIDE TABLE ---")
+print(combined_table, width = Inf)
+
+# Export summary table
+write_csv(combined_table, "/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/Table_1_Combined_Tissues.csv")
+
+# Global Min/Max/Mean Summaries
+internal_stats <- df_long %>%
+  summarize(
+    min_ug_g = min(hg_conc, na.rm = TRUE),
+    max_ug_g = max(hg_conc, na.rm = TRUE),
+    mean_ug_g = mean(hg_conc, na.rm = TRUE)
+  )
+
+print("--- INTERNAL TISSUE STATS ---")
+print(internal_stats)
+
+external_stats <- df_feathers_long %>%
+  summarize(
+    min_ug_g = min(hg_conc, na.rm = TRUE),
+    max_ug_g = max(hg_conc, na.rm = TRUE),
+    mean_ug_g = mean(hg_conc, na.rm = TRUE)
+  )
+
+print("--- EXTERNAL TISSUE STATS ---")
+print(external_stats)
