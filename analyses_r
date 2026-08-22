@@ -10,6 +10,7 @@ library(lmerTest)     # p-values for lme4 models
 library(performance)  # Model diagnostics
 library(corrplot)     # Correlation heatmaps
 library(multcompView) # Significance letter extraction
+library(multcomp)
 
 # ==============================================================================
 # 1. DATA IMPORT & PREPARATION
@@ -183,6 +184,24 @@ ggplot(df_long, aes(x = tissue_type, y = hg_conc, fill = age)) +
   labs(x = "Tissue", y = expression(paste("Mercury Concentration (", mu, "g/g)")))
 
 
+# 5. LINEAR REGRESSION: ORGANS VS WHOLE BODY
+# ==============================================================================
+# Load patchwork for plot assembly (if not already loaded)
+library(patchwork)
+
+# ==============================================================================
+# 5. LINEAR REGRESSION: ORGANS VS WHOLE BODY
+# ==============================================================================
+
+# Load patchwork for plot assembly (if not already loaded)
+library(patchwork)
+
+# ==============================================================================
+# 5. LINEAR REGRESSION: ORGANS VS WHOLE BODY
+# ==============================================================================
+# Load patchwork for plot assembly (if not already loaded)
+library(patchwork)
+
 # ==============================================================================
 # 5. LINEAR REGRESSION: ORGANS VS WHOLE BODY
 # ==============================================================================
@@ -221,39 +240,81 @@ reg_labels <- df_reg %>%
   ) %>%
   arrange(desc(r_squared))
 
-print("--- REGRESSION STATS ---")
-print(reg_labels)
-
-# Set factor levels to order facets by R-squared
+# Set factor levels to order facets by R-squared (Largest to Smallest)
 ordered_organs <- reg_labels$organ_type
 df_reg$organ_type <- factor(df_reg$organ_type, levels = ordered_organs)
 reg_labels$organ_type <- factor(reg_labels$organ_type, levels = ordered_organs)
 
-# Build Faceted Regression Plot
-ggplot(df_reg, aes(x = organ_hg, y = wb_ug_g)) +
+# ---------------------------------------------------------
+# 1. BUILD THE TOP ROW (Highest 3 R-squared)
+# ---------------------------------------------------------
+p_top <- ggplot(df_reg %>% filter(organ_type %in% ordered_organs[1:3]), aes(x = organ_hg, y = wb_ug_g)) +
   geom_point(alpha = 0.5, color = "gray0", size = 0.5) +
   geom_smooth(method = "lm", color = "grey40", fill = "gray80", linewidth = 0.5) +
-  facet_wrap(~ organ_type, scales = "free_x") +
+  facet_wrap(~ organ_type, ncol = 3) + 
   geom_text(
-    data = reg_labels,
+    data = reg_labels %>% filter(organ_type %in% ordered_organs[1:3]),
     aes(x = Inf, y = Inf, label = plot_label),
-    hjust = 1.1, 
-    vjust = 1.5, 
-    size = 3,
-    color = "gray20",
-    inherit.aes = FALSE
+    hjust = 1.1, vjust = 1.5, size = 3, color = "gray20", inherit.aes = FALSE
   ) +
+  coord_cartesian(xlim = c(0, 2.0), ylim = c(0, 1.0)) +
   theme_minimal() +
   theme(
     strip.text = element_text(face = "plain", size = 10),
-    axis.title = element_text(face = "plain", size = 11),
-    axis.text.x = element_text(size = 8) 
+    axis.title.x = element_blank(),  
+    axis.text.x = element_blank(),   
+    axis.ticks.x = element_blank(),  
+    axis.title.y = element_blank(),  # Stripped for the global axis
+    panel.spacing = unit(1, "lines") 
+  ) +
+  labs(y = NULL) 
+
+# ---------------------------------------------------------
+# 2. BUILD THE BOTTOM ROW (Remaining 4 R-squared)
+# ---------------------------------------------------------
+p_bottom <- ggplot(df_reg %>% filter(organ_type %in% ordered_organs[4:7]), aes(x = organ_hg, y = wb_ug_g)) +
+  geom_point(alpha = 0.5, color = "gray0", size = 0.5) +
+  geom_smooth(method = "lm", color = "grey40", fill = "gray80", linewidth = 0.5) +
+  facet_wrap(~ organ_type, ncol = 4) + 
+  geom_text(
+    data = reg_labels %>% filter(organ_type %in% ordered_organs[4:7]),
+    aes(x = Inf, y = Inf, label = plot_label),
+    hjust = 1.1, vjust = 1.5, size = 3, color = "gray20", inherit.aes = FALSE
+  ) +
+  coord_cartesian(xlim = c(0, 2.0), ylim = c(0, 1.0)) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(face = "plain", size = 10),
+    # Margin added to push x-axis label down slightly 
+    axis.title.x = element_text(face = "plain", size = 11, margin = margin(t = 10)),
+    axis.title.y = element_blank(),  # Stripped for the overall axis
+    axis.text.x = element_text(size = 8),
+    panel.spacing = unit(1, "lines") 
   ) +
   labs(
     x = expression(Organ~THg~(mu*g/g)),
-    y = expression(Whole~Body~THg~(mu*g/g))
+    y = NULL
   )
 
+# ---------------------------------------------------------
+# 3. BUILD THE Y-AXIS
+# ---------------------------------------------------------
+# Creates a blank plot containing only the y-axis text
+global_y_axis <- ggplot() + 
+  annotate("text", x = 0, y = 0, label = "Whole~Body~THg~(mu*g/g)", 
+           angle = 90, size = 3.8, parse = TRUE) + 
+  theme_void()
+
+# ---------------------------------------------------------
+# 4. COMBINE (Left-aligned + Y-Axis)
+# ---------------------------------------------------------
+# stack the plots left-aligned 
+plot_grid <- (p_top + plot_spacer() + plot_layout(widths = c(3, 1))) / p_bottom
+
+# append the global y-axis to the far left 
+final_plot <- global_y_axis + plot_grid + plot_layout(widths = c(0.03, 1))
+
+print(final_plot)
 
 # ==============================================================================
 # 6. VIOLIN PLOT: WHOLE BODY VS ORGANS VS FEATHERS
@@ -558,3 +619,4 @@ external_stats <- df_feathers_long %>%
 
 print("--- EXTERNAL TISSUE STATS ---")
 print(external_stats)
+
