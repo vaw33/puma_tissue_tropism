@@ -1,0 +1,10 @@
+explanation of calculations:
+
+brain ug/g: raw reading of ug thg per gram of tissue
+brain mass mg: mass of the tissue in mg
+brain mass g: mass of the tissue in g
+brain ug hg: brain ug/g reading × brain mass g (cancel g to leave you with ug of thg)
+
+body burden concentration: sum hg content (ug) / sum dry mass (g) (ug/g)
+
+body burden: the sum of thg per gram of bird (sum hg content of every organ, skin, bone, etc.) 
