@@ -162,7 +162,3 @@ Schielzeth, H., Dingemanse, N.J., Nakagawa, S., Westneat, D.F., Allegue, H., Tep
 Victoria A. Wiley — vaw33@nau.edu
 Department of Biological Sciences
 Northern Arizona University
-
-## License
-
-[Choose one — e.g. MIT for code, CC BY 4.0 for data.]
