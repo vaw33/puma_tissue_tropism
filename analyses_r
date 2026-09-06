@@ -620,3 +620,43 @@ external_stats <- df_feathers_long %>%
 print("--- EXTERNAL TISSUE STATS ---")
 print(external_stats)
 
+# ==============================================================================
+# 10. Blood-equivalent calculations
+# ==============================================================================
+
+setwd("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/feathers")
+
+
+# Load the required package
+library(dplyr)
+
+# 1. Load your two spreadsheets
+# (Ensure your working directory is set to where these files are located)
+organs <- read.csv("all_data_wide_with_wb_10rmvd.csv")
+feathers <- read.csv("feather_data_updated.csv")
+
+# 2. Join the datasets by 'bird_id'
+merged_data <- left_join(organs, feathers, by = "bird_id")
+
+# 3. Calculate the blood-equivalent concentrations (wet weight)
+final_data <- merged_data %>%
+  mutate(
+    # Muscle to Blood (using pectoralis: pec_ug_g)
+    blood_from_muscle_ww = exp(1.080 * log(pec_ug_g) - 1.024),
+    
+    # Liver to Blood (using liver: liver_ug_g)
+    blood_from_liver_ww = exp(0.970 * log(liver_ug_g) - 1.929),
+    
+    # Feather to Blood (using right primary: pr)
+    blood_from_feather_ww = exp(0.673 * log(breast) - 1.673)
+  )
+
+# 4. View a clean summary of the new calculated columns
+summary_data <- final_data %>%
+  select(bird_id, blood_from_muscle_ww, blood_from_liver_ww, blood_from_feather_ww)
+
+head(summary_data)
+print(summary_data)
+
+
+
