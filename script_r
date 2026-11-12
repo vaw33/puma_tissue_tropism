@@ -755,12 +755,7 @@ getwd()
 # 11. INDIVIDUAL-LEVEL DATA EXPORT  --  SUPPLEMENTAL TABLE S1
 # ==============================================================================
 
-# Whole-bird mass recorded at dissection. metadata.csv carries a UTF-8 BOM, so
-# read.csv renames "Bird #" to "X...Bird.." — match columns by pattern, not by
-# literal name. as.numeric() also turns bird 43's flagged estimate ("*29.28")
-# into NA, which is intended: the sheet notes it was never actually weighed.
-# Bird 11 has no mass recorded at all. Both appear blank in the table.
-meta <- read.csv("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/reanalysis_nov2026/metadata.csv")
+meta <- read.csv("/path/to/metadata/metadata.csv")
 
 body_mass <- tibble(
   bird_id     = suppressWarnings(as.numeric(meta[[grep("Bird",        names(meta))[1]]])),
