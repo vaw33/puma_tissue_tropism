@@ -50,13 +50,13 @@ theme_pm <- function(base_size = 11) {
 # 1. DATA IMPORT & PREPARATION
 # ==============================================================================
 
-setwd("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Manuscripts/_submitted/2_Chapter 2 - tissue tropism/env tox and chem/resubmit_nov2026/figures")
+setwd("/path/to/wd")
 
 # Load primary tissue data (testes excluded from current analyses)
-df <- read.csv("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/reanalysis_nov2026/all_data_wide_uncorrected.csv") %>%
+df <- read.csv("/path/to/organdf/all_data_wide_uncorrected.csv") %>%
   dplyr::select(-testes_ug_g)
 
-df_feathers <- read.csv("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/reanalysis_nov2026/feather_data_uncorrected.csv")
+df_feathers <- read.csv("/path/to/featherdf/feather_data_uncorrected.csv")
 
 # Convert tissue data to long format for modeling
 df_long <- df %>%
