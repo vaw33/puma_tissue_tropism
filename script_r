@@ -13,8 +13,7 @@ library(multcompView) # Significance letter extraction
 library(multcomp)
 library(patchwork)    # Plot assembly
 
-set.seed(20251102)    # geom_jitter in Figures 1 and 2 is random without this
-
+set.seed(20251102)    # For geom_jitter reproducibility
 
 # ==============================================================================
 # FIGURE PALETTE — light teal / gold (colorblind-safe) with Lavender integration
