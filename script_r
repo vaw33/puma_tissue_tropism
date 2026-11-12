@@ -16,7 +16,7 @@ library(patchwork)    # Plot assembly
 set.seed(20251102)    # For geom_jitter reproducibility
 
 # ==============================================================================
-# FIGURE PALETTE — light teal / gold (colorblind-safe) with Lavender integration
+# FIGURE PALETTE 
 # ==============================================================================
 
 pal_age    <- c("asy" = "#2B9E9E", "sy" = "#D4A017")   # box fills
