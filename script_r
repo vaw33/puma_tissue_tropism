@@ -13,16 +13,50 @@ library(multcompView) # Significance letter extraction
 library(multcomp)
 library(patchwork)    # Plot assembly
 
+set.seed(20251102)    # geom_jitter in Figures 1 and 2 is random without this
+
+
+# ==============================================================================
+# FIGURE PALETTE — light teal / gold (colorblind-safe) with Lavender integration
+# ==============================================================================
+
+pal_age    <- c("asy" = "#2B9E9E", "sy" = "#D4A017")   # box fills
+pal_age_pt <- c("asy" = "#1B7C7C", "sy" = "#8F6C0F")   # jittered points
+
+# Updated Figure 2 palette to match the lavender theme
+pal_cat    <- c("Whole Body"     = "#F2E6EB", 
+                "Organs (Avg)"   = "#D7C0CC", 
+                "Feathers (Avg)" = "#906C7E")
+pal_cat_pt <- c("Whole Body"     = "#5E4352", 
+                "Organs (Avg)"   = "#5E4352", 
+                "Feathers (Avg)" = "#5E4352") # Darker shade for contrast
+
+# Shared base theme
+theme_pm <- function(base_size = 11) {
+  theme_classic(base_size = base_size) +
+    theme(
+      axis.text        = element_text(face = "plain", color = "black"),
+      axis.title       = element_text(face = "plain"),
+      legend.text      = element_text(face = "plain"),
+      axis.line        = element_line(linewidth = 0.4, color = "black"),
+      axis.ticks       = element_line(linewidth = 0.3, color = "black"),
+      strip.background = element_blank(),
+      strip.text       = element_text(face = "plain", size = 10)
+    )
+}
+
 
 # ==============================================================================
 # 1. DATA IMPORT & PREPARATION
 # ==============================================================================
 
+setwd("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Manuscripts/_submitted/2_Chapter 2 - tissue tropism/env tox and chem/resubmit_nov2026/figures")
+
 # Load primary tissue data (testes excluded from current analyses)
-df <- read.csv("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/all_data_wide_with_wb_10rmvd_use.csv") %>%
+df <- read.csv("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/reanalysis_nov2026/all_data_wide_uncorrected.csv") %>%
   dplyr::select(-testes_ug_g)
 
-df_feathers <- read.csv("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/feathers/feather_data_updated.csv")
+df_feathers <- read.csv("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/reanalysis_nov2026/feather_data_uncorrected.csv")
 
 # Convert tissue data to long format for modeling
 df_long <- df %>%
@@ -104,29 +138,36 @@ summary(emmeans(model_feathers, pairwise ~ sex | feather_type, adjust = "tukey")
 
 
 # ==============================================================================
-# 4. TISSUE TROPISM COMPARISONS  --  FIGURE 1
+# 4. TISSUE TROPISM COMPARISONS -- FIGURE 1
 # ==============================================================================
 
-# Split data by age cohort for internal tissue comparisons
+# Define and apply consistent tissue ordering
+tissue_order <- c("wb", "gi", "pec", "gas", "brain", "heart", "lung", "liver")
+df_long <- df_long %>%
+  mutate(tissue_type = factor(tissue_type, levels = tissue_order))
+
+# Ensure age factor levels match strictly for position dodging
+df_long$age <- factor(df_long$age, levels = c("asy", "sy"))
+
 df_asy <- df_long %>% filter(age == "asy")
 df_sy  <- df_long %>% filter(age == "sy")
 
-# Adult (ASY) pairwise comparisons
 model_asy <- lmer(hg_conc ~ tissue_type + (1 | bird_id), data = df_asy)
-anova(model_asy)
-print("--- Adult Internal Tropism Post-Hocs ---")
-summary(emmeans(model_asy, pairwise ~ tissue_type, adjust = "tukey")$contrasts)
+model_sy  <- lmer(hg_conc ~ tissue_type + (1 | bird_id), data = df_sy)
 
-# Subadult (SY) pairwise comparisons
-model_sy <- lmer(hg_conc ~ tissue_type + (1 | bird_id), data = df_sy)
-anova(model_sy)
-print("--- Subadult Internal Tropism Post-Hocs ---")
-summary(emmeans(model_sy, pairwise ~ tissue_type, adjust = "tukey")$contrasts)
-
-# Generate significance letters for plot annotations
-emm_tissue <- emmeans(model_organs, ~ tissue_type | age)
-cld_tissue <- cld(emm_tissue, alpha = 0.05, Letters = letters, adjust = "tukey") %>%
-  mutate(.group = str_squish(.group))
+# Post-hoc letters 
+cld_tissue <- bind_rows(
+  multcomp::cld(emmeans(model_asy, ~ tissue_type), alpha = 0.05,
+                Letters = letters, adjust = "tukey") %>%
+    as.data.frame() %>% mutate(age = "asy"),
+  multcomp::cld(emmeans(model_sy,  ~ tissue_type), alpha = 0.05,
+                Letters = letters, adjust = "tukey") %>%
+    as.data.frame() %>% mutate(age = "sy")
+) %>%
+  mutate(
+    .group = str_squish(.group),
+    age    = factor(age, levels = c("asy", "sy"))
+  )
 
 max_vals_tissue <- df_long %>%
   group_by(tissue_type, age) %>%
@@ -134,62 +175,59 @@ max_vals_tissue <- df_long %>%
 
 cld_tissue_plot <- left_join(cld_tissue, max_vals_tissue, by = c("tissue_type", "age"))
 
-# Define significant age difference annotations (asterisks)
-sig_asterisk <- data.frame(
-  tissue_type = c("lung", "brain"),
-  y_position = c(
-    max(df_long$hg_conc[df_long$tissue_type == "lung"],  na.rm = TRUE) + 0.30,
-    max(df_long$hg_conc[df_long$tissue_type == "brain"], na.rm = TRUE) + 0.30
-  ),
-  label = c("***", "*")
-)
+# Constant vertical offsets (data units) so every tissue's label sits the same
+# distance above its box; a multiplicative offset crowds the low tissues.
+lab_gap  <- 0.040 * diff(range(df_long$hg_conc, na.rm = TRUE))
+star_gap <- 0.095 * diff(range(df_long$hg_conc, na.rm = TRUE))
 
-# Order factor levels from lowest to highest overall concentration
-df_long$tissue_type <- factor(df_long$tissue_type,
-                              levels = c("wb", "gi", "pec", "gas", "brain",
-                                         "heart", "lung", "liver"))
+# Asterisks derived from the model rather than hard-coded, so they cannot go stale.
+age_tab <- as.data.frame(
+    summary(emmeans(model_organs, pairwise ~ age | tissue_type,
+                    adjust = "tukey")$contrasts)) %>%
+  mutate(stars = case_when(p.value < 0.001 ~ "***", p.value < 0.01 ~ "**",
+                           p.value < 0.05  ~ "*",   TRUE ~ "")) %>%
+  filter(stars != "")
 
-# Build Tissue Tropism Boxplot
+sig_asterisk <- df_long %>%
+  filter(tissue_type %in% age_tab$tissue_type) %>%
+  group_by(tissue_type) %>%
+  summarize(y_position = max(hg_conc, na.rm = TRUE) + star_gap, .groups = "drop") %>%
+  left_join(age_tab %>% dplyr::select(tissue_type, label = stars), by = "tissue_type")
+
+# Build Figure 1
 fig1 <- ggplot(df_long, aes(x = tissue_type, y = hg_conc, fill = age)) +
-  geom_boxplot(alpha = 0.5, outlier.shape = NA, position = position_dodge(width = 0.8)) +
-  geom_jitter(aes(color = age), alpha = 0.6, size = 0.5,
+  geom_boxplot(alpha = 0.6, outlier.shape = NA, linewidth = 0.35,
+               position = position_dodge(width = 0.8)) +
+  geom_jitter(aes(color = age), alpha = 0.55, size = 0.5,
               position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8)) +
-  
-  # Significance letters
   geom_text(data = cld_tissue_plot,
-            aes(x = tissue_type, y = max_hg + 0.10, label = .group, group = age),
+            aes(x = tissue_type, y = max_hg + lab_gap, label = .group, group = age),
             position = position_dodge(width = 0.8),
-            inherit.aes = FALSE, size = 3.0, fontface = "plain") +
-  
-  # Age significance asterisks
+            inherit.aes = FALSE, size = 3.0, color = "gray20") +
   geom_text(data = sig_asterisk,
             aes(x = tissue_type, y = y_position, label = label),
-            inherit.aes = FALSE, size = 4, fontface = "plain") +
-  
-  scale_fill_manual(values = c("asy" = "#4A90E2", "sy" = "#F5A623"),
-                    labels = c("asy" = "Adult", "sy" = "Subadult")) +
-  scale_color_manual(values = c("asy" = "#2C5A8D", "sy" = "#B37300"),
-                     labels = c("asy" = "Adult", "sy" = "Subadult")) +
-  
+            inherit.aes = FALSE, size = 4) +
+  scale_fill_manual(values = pal_age, labels = c("asy" = "Adult", "sy" = "Subadult")) +
+  scale_color_manual(values = pal_age_pt, labels = c("asy" = "Adult", "sy" = "Subadult")) +
   scale_x_discrete(labels = c("wb" = "Whole Body", "gi" = "GI Tract", "pec" = "Pectoralis",
                               "gas" = "Gastrocnemius", "brain" = "Brain", "heart" = "Heart",
                               "lung" = "Lung", "liver" = "Liver")) +
-  
-  theme_minimal(base_size = 11) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.20))) +
+  theme_pm(base_size = 11) +
   theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, face = "plain"),
-    axis.title  = element_text(face = "plain"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
     legend.position = "top",
     legend.title = element_blank(),
-    panel.grid.major.x = element_blank()
+    panel.grid.major.y = element_line(linewidth = 0.2, color = "gray92")
   ) +
-  scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +
   labs(x = "Tissue", y = "THg concentration (μg/g dw)")
 
-print(fig1)
+# Reset graphics drivers if a background PDF device crashed previously
+graphics.off()
 
-ggsave("Figure1.pdf", plot = fig1, width = 6.9, height = 5,
-       units = "in", device = cairo_pdf)
+# Print to screen and save
+print(fig1)
+ggsave("Figure1_uncorrected.pdf", plot = fig1, width = 6.9, height = 5, units = "in", device = cairo_pdf)
 
 
 # ==============================================================================
@@ -221,38 +259,26 @@ sophisticated_data <- df_merged %>%
 
 # Build Aggregate Violin Plot
 fig2 <- ggplot(sophisticated_data, aes(x = Tissue_Type, y = Hg)) +
-  geom_violin(aes(fill = Tissue_Type), alpha = 0.3, trim = FALSE,
-              color = "black", linewidth = 0.6) +
-  geom_jitter(aes(color = Tissue_Type), width = 0.12, alpha = 0.6, size = 0.5) +
-  geom_boxplot(width = 0.1, fill = "white", color = "black",
-               outlier.shape = NA, alpha = 0.9, linewidth = 0.6) +
+  geom_violin(aes(fill = Tissue_Type), alpha = 0.6, trim = FALSE,
+              color = "gray30", linewidth = 0.4) +
+  geom_jitter(aes(color = Tissue_Type), width = 0.12, alpha = 0.55, size = 0.5) +
+  geom_boxplot(width = 0.1, fill = "white", color = "gray20",
+               outlier.shape = NA, alpha = 0.9, linewidth = 0.4) +
   
-  scale_fill_manual(values = c("Whole Body" = "#7F7F7F",
-                               "Organs (Avg)" = "#008080",
-                               "Feathers (Avg)" = "#7B3294")) +
-  scale_color_manual(values = c("Whole Body" = "#595959",
-                                "Organs (Avg)" = "#005959",
-                                "Feathers (Avg)" = "#5A117A")) +
+  scale_fill_manual(values = pal_cat) +
+  scale_color_manual(values = pal_cat_pt) +
   
-  theme_classic(base_size = 10) +
+  theme_pm(base_size = 11) +
   theme(
     legend.position = "none",
-    axis.text.x  = element_text(face = "plain", size = 9, color = "black"),
-    axis.text.y  = element_text(face = "plain", size = 9, color = "black"),
-    axis.title.x = element_text(face = "plain", size = 10, margin = margin(t = 8)),
-    axis.title.y = element_text(face = "plain", size = 10, margin = margin(r = 8)),
-    axis.line    = element_line(linewidth = 0.5, color = "black"),
-    axis.ticks   = element_line(linewidth = 0.3, color = "black"),
-    plot.title   = element_text(face = "plain", hjust = 0.5, size = 10)
+    panel.grid.major.y = element_line(linewidth = 0.2, color = "gray92"),
+    axis.title.x = element_text(margin = margin(t = 8))
   ) +
-  labs(
-    x = "Tissue",
-    y = "THg concentration (μg/g dw)"
-  )
+  labs(x = "Tissue", y = "THg concentration (μg/g dw)")
 
 print(fig2)
 
-ggsave("Figure2.pdf", plot = fig2, width = 6.9, height = 4.5,
+ggsave("Figure2_uncorrected.pdf", plot = fig2, width = 5.5, height = 4.5,
        units = "in", device = cairo_pdf)
 
 
@@ -290,7 +316,7 @@ reg_labels <- df_reg %>%
   ) %>%
   mutate(
     p_format   = if_else(p_value < 0.001, "p < 0.001", sprintf("p = %.3f", p_value)),
-    plot_label = sprintf("R\u00B2 = %.3f\n%s", r_squared, p_format)
+    plot_label = sprintf("R\u00B2 = %.2f\n%s", r_squared, p_format)
   ) %>%
   arrange(desc(r_squared))
 
@@ -299,11 +325,16 @@ ordered_organs <- reg_labels$organ_type
 df_reg$organ_type     <- factor(df_reg$organ_type,     levels = ordered_organs)
 reg_labels$organ_type <- factor(reg_labels$organ_type, levels = ordered_organs)
 
-# Top row (highest 3 R-squared)
+# Define terrain color palette for the 7 organs 
+# (sampling from n=9 avoids the invisible off-white at the end of the spectrum)
+pal_terrain <- setNames(terrain.colors(9)[1:7], ordered_organs)
+
 p_top <- ggplot(df_reg %>% filter(organ_type %in% ordered_organs[1:3]),
                 aes(x = organ_hg, y = wb_ug_g)) +
-  geom_point(alpha = 0.5, color = "gray0", size = 0.5) +
-  geom_smooth(method = "lm", color = "grey40", fill = "gray80", linewidth = 0.5) +
+  geom_point(alpha = 0.6, color = "black", size = 0.8, shape = 16) +
+  geom_smooth(aes(color = organ_type, fill = organ_type), method = "lm", linewidth = 0.6, alpha = 0.25) +
+  scale_color_manual(values = pal_terrain) +
+  scale_fill_manual(values = pal_terrain) +
   facet_wrap(~ organ_type, ncol = 3) +
   geom_text(
     data = reg_labels %>% filter(organ_type %in% ordered_organs[1:3]),
@@ -311,22 +342,33 @@ p_top <- ggplot(df_reg %>% filter(organ_type %in% ordered_organs[1:3]),
     hjust = 1.1, vjust = 1.5, size = 3, color = "gray20", inherit.aes = FALSE
   ) +
   coord_cartesian(xlim = c(0, 2.0), ylim = c(0, 1.0)) +
-  theme_minimal() +
+  theme_pm(base_size = 11) +
   theme(
-    strip.text    = element_text(face = "plain", size = 10),
+    panel.grid.major   = element_line(linewidth = 0.2, color = "gray92"),
+    panel.border       = element_rect(color = "gray80", fill = NA, linewidth = 0.5),
+    strip.text         = element_text(size = 11),
+    axis.line          = element_blank(),
+    axis.line.x        = element_blank(),
+    axis.line.x.bottom = element_blank(),
+    axis.line.x.top    = element_blank(),
+    axis.line.y        = element_blank(),
+    axis.line.y.left   = element_blank(),
+    axis.line.y.right  = element_blank(),
     axis.title.x  = element_blank(),
     axis.text.x   = element_blank(),
     axis.ticks.x  = element_blank(),
     axis.title.y  = element_blank(),
-    panel.spacing = unit(1, "lines")
+    panel.spacing = unit(1, "lines"),
+    legend.position = "none"
   ) +
   labs(y = NULL)
 
-# Bottom row (remaining 4)
 p_bottom <- ggplot(df_reg %>% filter(organ_type %in% ordered_organs[4:7]),
                    aes(x = organ_hg, y = wb_ug_g)) +
-  geom_point(alpha = 0.5, color = "gray0", size = 0.5) +
-  geom_smooth(method = "lm", color = "grey40", fill = "gray80", linewidth = 0.5) +
+  geom_point(alpha = 0.6, color = "black", size = 0.8, shape = 16) +
+  geom_smooth(aes(color = organ_type, fill = organ_type), method = "lm", linewidth = 0.6, alpha = 0.25) +
+  scale_color_manual(values = pal_terrain) +
+  scale_fill_manual(values = pal_terrain) +
   facet_wrap(~ organ_type, ncol = 4) +
   geom_text(
     data = reg_labels %>% filter(organ_type %in% ordered_organs[4:7]),
@@ -334,20 +376,23 @@ p_bottom <- ggplot(df_reg %>% filter(organ_type %in% ordered_organs[4:7]),
     hjust = 1.1, vjust = 1.5, size = 3, color = "gray20", inherit.aes = FALSE
   ) +
   coord_cartesian(xlim = c(0, 2.0), ylim = c(0, 1.0)) +
-  theme_minimal() +
+  theme_pm(base_size = 11) +
   theme(
-    strip.text    = element_text(face = "plain", size = 10),
-    axis.title.x  = element_text(face = "plain", size = 11, margin = margin(t = 10)),
+    panel.grid.major = element_line(linewidth = 0.2, color = "gray92"),
+    panel.border     = element_rect(color = "gray80", fill = NA, linewidth = 0.5),
+    strip.text       = element_text(size = 11),
+    axis.line        = element_blank(),
+    axis.title.x  = element_text(margin = margin(t = 10)),
     axis.title.y  = element_blank(),
     axis.text.x   = element_text(size = 8),
-    panel.spacing = unit(1, "lines")
+    panel.spacing = unit(1, "lines"),
+    legend.position = "none"
   ) +
   labs(
     x = "Organ THg (μg/g dw)",
     y = NULL
   )
 
-# Global y-axis label
 global_y_axis <- ggplot() +
   annotate("text", x = 0, y = 0, label = "Whole-body THg (μg/g dw)",
            angle = 90, size = 3.8) +
@@ -358,18 +403,25 @@ plot_grid <- (p_top + plot_spacer() + plot_layout(widths = c(3, 1))) / p_bottom
 fig3 <- global_y_axis + plot_grid + plot_layout(widths = c(0.03, 1))
 
 print(fig3)
-
-ggsave("Figure3.pdf", plot = fig3, width = 6.9, height = 5.5,
+ggsave("Figure3_uncorrected.pdf", plot = fig3, width = 11, height = 6,
        units = "in", device = cairo_pdf)
+
+
 
 
 # ==============================================================================
 # 7. CORRELATION HEAT MAP: ORGANS AND FEATHERS  --  FIGURE 4
 # ==============================================================================
 
+pal_corr      <- colorRampPalette(c("#2F4B85", "#F8FAFC", "#C1553A"))(200)  # S1/S2 heatmaps
+pal_corr_fig4 <- colorRampPalette(c("#F8FAFC", "#C1553A"))(200)             # Fig 4: white at 0 -> red at 1
+
+
 # Format dataset for correlation matrix
 cor_data_final <- df_merged %>%
-  dplyr::select(ends_with("_ug_g"), rr, rl, crown, pr, pl, dorsal, breast) %>%
+  dplyr::select(brain_ug_g, heart_ug_g, lung_ug_g, liver_ug_g, gi_ug_g,
+                pec_ug_g, gas_ug_g, wb_ug_g,
+                pr, pl, rr, rl, crown, dorsal, breast) %>%
   rename(
     Brain = brain_ug_g, Liver = liver_ug_g, Lung = lung_ug_g,
     Heart = heart_ug_g, Pectoralis = pec_ug_g,
@@ -382,32 +434,44 @@ cor_data_final <- df_merged %>%
 # Calculate correlations
 res_final <- cor(cor_data_final, method = "pearson", use = "pairwise.complete.obs")
 
+# Matrix of p-values for the same pairs
+p_final <- corrplot::cor.mtest(cor_data_final, method = "pearson")$p
+diag(p_final) <- 0
+
+# Flat light blue for non-significant cells
+pal_ns <- rep("#BFD3E6", 200)
+
+# Split the matrix; NA cells are skipped because na.label = " "
+res_sig <- res_final; res_sig[p_final >= 0.05] <- NA
+res_ns  <- res_final; res_ns[p_final <  0.05] <- NA
+
+# Arguments shared by both passes
+args_common <- list(
+  method      = "circle",
+  type        = "upper",
+  is.corr     = FALSE,
+  col.lim     = c(0, 1),
+  addCoef.col = "black",
+  number.cex  = 0.5,
+  diag        = FALSE,
+  mar         = c(0, 0, 1, 0),
+  na.label    = " "
+)
+
+# Significant cells on the red ramp, then non-significant cells overlaid in blue
+draw_fig4 <- function() {
+  suppressWarnings(do.call(corrplot, c(list(corr = res_sig, col = pal_corr_fig4,
+                                            tl.col = "black", tl.srt = 45, tl.cex = 0.7, cl.cex = 0.7), args_common)))
+  suppressWarnings(do.call(corrplot, c(list(corr = res_ns, col = pal_ns,
+                                            tl.pos = "n", cl.pos = "n", bg = "transparent", add = TRUE), args_common)))
+}
+
 # Build Correlation Matrix Plot (screen)
-corrplot(res_final,
-         method = "circle",
-         type = "upper",
-         tl.col = "black",
-         tl.srt = 45,
-         tl.cex = 0.7,
-         cl.cex = 0.7,
-         addCoef.col = "black",
-         number.cex = 0.5,
-         diag = FALSE,
-         mar = c(0,0,1,0))
+draw_fig4()
 
 # Export as vector PDF
-pdf("Figure4.pdf", width = 6.9, height = 6)
-corrplot(res_final,
-         method = "circle",
-         type = "upper",
-         tl.col = "black",
-         tl.srt = 45,
-         tl.cex = 0.7,
-         cl.cex = 0.7,
-         addCoef.col = "black",
-         number.cex = 0.5,
-         diag = FALSE,
-         mar = c(0,0,1,0))
+cairo_pdf("Figure4_uncorrected.pdf", width = 6.9, height = 6)
+draw_fig4()
 dev.off()
 
 # Extract Top Predictors/Proxies
@@ -448,7 +512,6 @@ print(top_proxies)
 # Check exact correlation value for specific pairs
 print(round(res_final["Lung", c("R. Primary", "L. Primary")], 4))
 
-
 # ==============================================================================
 # 8. INDIVIDUAL Z-SCORE HEATMAPS  --  SUPPLEMENTAL FIGURES
 # ==============================================================================
@@ -480,7 +543,7 @@ heatmap_data_organs <- ind_plot_data_organs %>%
 
 figS1 <- ggplot(heatmap_data_organs, aes(x = tissue, y = bird_id, fill = z_score)) +
   geom_tile(color = "white") +
-  scale_fill_viridis_c(option = "magma", name = "Z-score") +
+  scale_fill_gradientn(colors = pal_corr, name = "Z-score") +
   theme_minimal(base_size = 10) +
   theme(
     axis.text.x  = element_text(angle = 45, hjust = 1, face = "plain", size = 8, color = "black"),
@@ -526,7 +589,7 @@ heatmap_feathers <- heatmap_feathers %>%
 
 figS2 <- ggplot(heatmap_feathers, aes(x = feather_type, y = bird_id, fill = z_score)) +
   geom_tile(color = "white") +
-  scale_fill_viridis_c(option = "magma", name = "Z-score") +
+  scale_fill_gradientn(colors = pal_corr, name = "Z-score") +
   theme_minimal(base_size = 10) +
   theme(
     axis.text.x  = element_text(angle = 45, hjust = 1, face = "plain", size = 8, color = "black"),
@@ -616,7 +679,7 @@ combined_table <- df_long %>%
 print("--- FINAL COMBINED WIDE TABLE ---")
 print(combined_table, width = Inf)
 
-write_csv(combined_table, "Table_1_Combined_Tissues.csv")
+write_csv(combined_table, "Table_1_Combined_Tissues_uncorrected.csv")
 
 # Global Min/Max/Mean Summaries
 internal_stats <- df_long %>%
@@ -655,7 +718,7 @@ blood_equiv <- df %>%
   ) %>%
   dplyr::select(bird_id, blood_from_liver_ww, blood_from_muscle_ww, blood_from_breast_ww)
 
-print(blood_equiv, n = Inf)
+print(blood_equiv)   # n = Inf is a tibble argument; blood_equiv is a data.frame
 
 # Summary statistics and threshold exceedances
 blood_summary <- blood_equiv %>%
@@ -681,3 +744,60 @@ print("--- BLOOD-EQUIVALENT SUMMARY (Table 3) ---")
 print(blood_summary, width = Inf)
 
 write_csv(blood_summary, "Table_3_Blood_Equivalent.csv")
+
+
+# ==============================================================================
+# SESSION INFO (for reproducibility)
+# ==============================================================================
+sessionInfo()
+
+getwd()
+
+# ==============================================================================
+# 11. INDIVIDUAL-LEVEL DATA EXPORT  --  SUPPLEMENTAL TABLE S1
+# ==============================================================================
+
+# Whole-bird mass recorded at dissection. metadata.csv carries a UTF-8 BOM, so
+# read.csv renames "Bird #" to "X...Bird.." — match columns by pattern, not by
+# literal name. as.numeric() also turns bird 43's flagged estimate ("*29.28")
+# into NA, which is intended: the sheet notes it was never actually weighed.
+# Bird 11 has no mass recorded at all. Both appear blank in the table.
+meta <- read.csv("/Users/victoriawiley/Library/CloudStorage/Dropbox/Documents/_PhD/Research/ch2_tissue_tropism/analysis/reanalysis_nov2026/metadata.csv")
+
+body_mass <- tibble(
+  bird_id     = suppressWarnings(as.numeric(meta[[grep("Bird",        names(meta))[1]]])),
+  body_mass_g = suppressWarnings(as.numeric(meta[[grep("^X?\\.*Mass", names(meta))[1]]]))
+) %>%
+  filter(!is.na(bird_id))
+
+u <- function(x) paste0(x, " (ug/g dw)")
+
+table_s1 <- df %>%
+  dplyr::select(bird_id, age, sex, wb_ug_g, brain_ug_g, heart_ug_g, lung_ug_g,
+                liver_ug_g, gi_ug_g, pec_ug_g, gas_ug_g) %>%
+  left_join(dplyr::select(df_feathers, bird_id, crown, breast, dorsal, pr, pl, rr, rl),
+            by = "bird_id") %>%
+  left_join(body_mass, by = "bird_id") %>%
+  relocate(body_mass_g, .after = sex) %>%
+  mutate(age         = recode(age, "asy" = "Adult", "sy" = "Subadult"),
+         body_mass_g = round(body_mass_g, 2),
+         across(c(ends_with("_ug_g"), crown, breast, dorsal, pr, pl, rr, rl),
+                ~ round(.x, 3))) %>%
+  arrange(age, bird_id) %>%
+  as_tibble() %>%
+  rename(`Bird ID` = bird_id, Age = age, Sex = sex, `Body mass (g)` = body_mass_g,
+         !!u("Whole body")    := wb_ug_g,    !!u("Brain")         := brain_ug_g,
+         !!u("Heart")         := heart_ug_g, !!u("Lung")          := lung_ug_g,
+         !!u("Liver")         := liver_ug_g, !!u("GI tract")      := gi_ug_g,
+         !!u("Pectoralis")    := pec_ug_g,   !!u("Gastrocnemius") := gas_ug_g,
+         !!u("Crown")         := crown,      !!u("Breast")        := breast,
+         !!u("Dorsal")        := dorsal,     !!u("R. primary")    := pr,
+         !!u("L. primary")    := pl,         !!u("R. rectrix")    := rr,
+         !!u("L. rectrix")    := rl)
+
+cat("Table S1:", nrow(table_s1), "birds |",
+    sum(table_s1$Age == "Adult"), "adults,", sum(table_s1$Age == "Subadult"), "subadults | body mass n =",
+    sum(!is.na(table_s1$`Body mass (g)`)), "\n")
+
+write_csv(table_s1, "Table_S1_individual_data.csv", na = "")
+
